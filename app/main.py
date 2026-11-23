@@ -21,7 +21,7 @@ app.include_router(router)
 
 @app.get("/")
 def read_root() -> dict[str, str]:
-    return {"health checker": "OK"}
+    return {"service": "Travel Planner API", "status": "OK", "docs": "/docs"}
 
 
 @app.get("/health", tags=["health"])
