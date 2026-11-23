@@ -53,7 +53,7 @@ variable "app_port" {
 }
 
 variable "github_repo" {
-  description = "GitHub repository (owner/name) allowed to deploy via OIDC"
+  description = "GitHub repo as it appears in the OIDC token: owner@ownerId/name@repoId (IDs make it immune to rename/recreate)"
   type        = string
-  default     = "MaksymOleksiv/travel-planner-cloud"
+  default     = "MaksymOleksiv@185097269/travel-planner-cloud@1468717792"
 }
