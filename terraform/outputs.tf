@@ -19,3 +19,8 @@ output "db_endpoint" {
   description = "Private DNS name, reachable only from inside the VPC"
   value       = aws_db_instance.main.address
 }
+
+output "github_deploy_role_arn" {
+  description = "Role assumed by GitHub Actions (set as repo variable AWS_ROLE_ARN)"
+  value       = aws_iam_role.github_deploy.arn
+}

@@ -51,3 +51,9 @@ variable "app_port" {
   type    = number
   default = 8000
 }
+
+variable "github_repo" {
+  description = "GitHub repository (owner/name) allowed to deploy via OIDC"
+  type        = string
+  default     = "MaksymOleksiv/travel-planner-cloud"
+}
