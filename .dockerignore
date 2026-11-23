@@ -9,3 +9,4 @@ terraform
 docs
 *.md
 compose.yaml
+scripts
