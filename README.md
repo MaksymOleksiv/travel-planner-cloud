@@ -1,219 +1,190 @@
-# Travel Planner - Backend API
+# Travel Planner API — розгортання в AWS
 
-A RESTful API for managing travel projects and places to visit. Built with FastAPI, SQLAlchemy, and integrated with the Art Institute of Chicago API.
+REST API для планування подорожей: користувач створює **проєкти** (поїздки) і додає до них **місця** для відвідування, відмічає відвідані; проєкт автоматично стає `completed`, коли всі місця відвідані.
 
-## Features
+Лабораторна робота 1 з курсу хмарних технологій: застосунок у контейнері, інфраструктура як код (Terraform), керована база, балансувальник і автоматичний деплой з GitHub.
 
-- CRUD operations for travel projects
-- Integration with Art Institute of Chicago API for artwork/place data
-- Automatic project status management (active/completed)
-- Validation and business logic enforcement
-- Docker support for easy deployment
-- Interactive API documentation (Swagger UI)
+## Публічна адреса
 
-## Tech Stack
+| | URL |
+|---|---|
+| API | http://travel-planner-alb-1039128351.eu-north-1.elb.amazonaws.com |
+| Swagger UI | http://travel-planner-alb-1039128351.eu-north-1.elb.amazonaws.com/docs |
+| Health check | http://travel-planner-alb-1039128351.eu-north-1.elb.amazonaws.com/health |
 
-- **Framework**: FastAPI 0.129.0
-- **Database**: SQLite with SQLAlchemy 2.0.46 (async)
-- **Migrations**: Alembic 1.18.4
-- **HTTP Client**: httpx 0.28.1
-- **Python**: 3.12+
+> Адреса змінюється після `terraform destroy` + `apply`; актуальна — у `terraform output app_url`.
+> Лише HTTP: для HTTPS потрібен власний домен і сертифікат ACM.
 
-## Quick Start
+## Технології
 
-### Prerequisites
+- **Застосунок:** Python 3.12, FastAPI, SQLAlchemy (async) + asyncpg, Alembic (міграції), JWT (PyJWT, bcrypt)
+- **Контейнер:** Docker, Docker Compose
+- **Хмара (AWS, регіон eu-north-1):** ECS Fargate (ARM64), RDS PostgreSQL 17, ECR, Application Load Balancer, VPC, Secrets Manager, CloudWatch, SNS, IAM (OIDC)
+- **IaC:** Terraform
+- **CI/CD:** GitHub Actions
 
-- Docker and Docker Compose
-- OR Python 3.12+ (for local development)
+## Архітектура
 
-### Running with Docker
+```
+                         Інтернет
+                            │  HTTP :80
+                ┌───────────▼───────────┐
+   VPC          │  Application LB       │  публічні підмережі (2 AZ)
+ 10.20.0.0/16   └───────────┬───────────┘
+                            │ :8000  (тільки від SG балансувальника)
+                ┌───────────▼───────────┐
+                │  ECS Fargate task     │  публічні підмережі, вхід лише від ALB
+                │  (FastAPI контейнер)  │──► ECR, Secrets Manager, CloudWatch Logs
+                └───────────┬───────────┘
+                            │ :5432  (тільки від SG застосунку)
+                ┌───────────▼───────────┐
+                │  RDS PostgreSQL       │  приватні підмережі, без публічної адреси
+                └───────────────────────┘
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd Test-Assessment-Travel-Planner-Backend
+ GitHub push ─► GitHub Actions ─(OIDC роль)─► ECR (тег = хеш коміту) ─► ECS rolling update
 ```
 
-2. Create environment file:
-```bash
-cp .env.example .env
+- **Мережа:** VPC з двома публічними (ALB, контейнери) і двома приватними (база) підмережами у двох зонах доступності. Приватні підмережі не мають маршруту в інтернет. NAT Gateway свідомо не використовується (≈$35/міс.): контейнери мають публічну IP лише для вихідного трафіку, вхідний закритий security group.
+- **Firewall:** ланцюжок security groups `ALB (80 з інтернету) → app (8000 тільки від ALB SG) → db (5432 тільки від app SG)` — правила посилаються на групи, а не на IP.
+- **Секрети:** пароль бази генерує RDS і зберігає в Secrets Manager; ключ підпису JWT генерує Terraform і теж кладе в Secrets Manager. ECS підставляє обидва в контейнер як змінні середовища. У коді, образі й репозиторії секретів немає.
+
+## Структура проєкту
+
+```
+.
+├── app/                        # код застосунку (FastAPI)
+│   ├── main.py                 # точка входу, /health
+│   ├── api/
+│   │   ├── dependencies.py     # репозиторії, перевірка JWT (get_current_user)
+│   │   └── v1/routes/          # auth, projects, project_places
+│   ├── core/                   # config (змінні середовища), database, security (JWT, bcrypt)
+│   ├── models/                 # SQLAlchemy-моделі: Project, ProjectPlace, User
+│   ├── repositories/           # доступ до бази
+│   ├── schemas/                # Pydantic-схеми запитів/відповідей
+│   └── services/               # клієнт зовнішнього Art Institute API
+├── alembic/                    # міграції бази (виконуються при старті контейнера)
+├── Dockerfile                  # образ застосунку
+├── docker-entrypoint.sh        # alembic upgrade head + uvicorn
+├── compose.yaml                # локальний запуск: застосунок + PostgreSQL
+├── scripts/push-image.sh       # збірка і push першого образу (викликається з Terraform)
+├── terraform/                  # уся інфраструктура AWS
+│   ├── versions.tf             # провайдери, регіон, зони доступності
+│   ├── variables.tf            # параметри
+│   ├── network.tf              # VPC, підмережі, Internet Gateway, маршрути
+│   ├── security.tf             # security groups
+│   ├── ecr.tf                  # реєстр образів + перший образ
+│   ├── rds.tf                  # PostgreSQL
+│   ├── secrets.tf              # ключ підпису JWT у Secrets Manager
+│   ├── alb.tf                  # балансувальник, target group, health check
+│   ├── ecs.tf                  # кластер, IAM-ролі, task definition, сервіс, логи
+│   ├── github-oidc.tf          # OIDC-провайдер і роль для GitHub Actions
+│   ├── monitoring.tf           # дашборд CloudWatch, алерти, SNS → email
+│   ├── budget.tf               # бюджет зі сповіщенням на email
+│   └── outputs.tf              # публічна адреса тощо
+└── .github/workflows/deploy.yml  # CI/CD
 ```
 
-3. Start the application:
+## Запуск локально
+
+Потрібен Docker.
+
 ```bash
+cp .env.example .env      # задати DB_PASSWORD і JWT_SECRET
 docker compose up --build
 ```
 
-The API will be available at `http://localhost:8000`
+API: http://localhost:8000, Swagger: http://localhost:8000/docs.
+Дані бази лежать у volume `pgdata` і переживають `docker compose down` (видаляються лише `docker compose down -v`).
 
-### Running Locally
+### Dockerfile
 
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+- базовий образ із зафіксованою версією: `python:3.12.12-slim-bookworm`;
+- `requirements.txt` копіюється і встановлюється **до** коду → при зміні коду шар із залежностями береться з кешу;
+- процес працює від непривілейованого користувача `appuser` (uid 10001);
+- при старті виконуються міграції (`alembic upgrade head`), потім `uvicorn`.
 
-2. Create `.env` file:
-```bash
-APP_ENV=development
-DATABASE_URL=sqlite+aiosqlite:///./travel_planner.db
-ARTIC_API_BASE_URL=https://api.artic.edu/api/v1
-ARTIC_API_TIMEOUT=10
-```
+## Розгортання в AWS
 
-3. Run database migrations:
-```bash
-alembic upgrade head
-```
-
-4. Start the server:
-```bash
-uvicorn app.main:app --reload
-```
-
-## API Documentation
-
-Interactive API documentation is available at:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
-For frontend developers: See [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) for detailed endpoint specifications, request/response examples, and integration tips.
-
-## API Endpoints
-
-### Travel Projects
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/projects/` | List all projects (with pagination) |
-| GET | `/api/v1/projects/{id}` | Get a single project with all places |
-| POST | `/api/v1/projects/` | Create a new project (optionally with places) |
-| PATCH | `/api/v1/projects/{id}` | Update project information |
-| DELETE | `/api/v1/projects/{id}` | Delete project (if no places are visited) |
-
-### Project Places
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/projects/{project_id}/places/` | List all places in a project |
-| GET | `/api/v1/projects/{project_id}/places/{place_id}` | Get a single place |
-| POST | `/api/v1/projects/{project_id}/places/` | Add a place to a project |
-| PATCH | `/api/v1/projects/{project_id}/places/{place_id}` | Update place notes/visited status |
-
-## Usage Examples
-
-### Create a Project with Places
+Потрібні: AWS CLI з налаштованим IAM-користувачем, Terraform ≥ 1.10, Docker.
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/projects/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Chicago Art Tour",
-    "description": "Visit famous artworks",
-    "start_date": "2026-03-01",
-    "place_external_ids": [4, 20684, 27992]
-  }'
+cd terraform
+cp terraform.tfvars.example terraform.tfvars   # вказати alert_email
+terraform init
+terraform apply                                 # ~10-15 хв (найдовше — RDS)
+terraform output app_url
 ```
 
-### List Projects
+`terraform apply` з порожнього акаунта створює все, включно з першим образом у ECR.
+Після `apply` підтвердити підписку в листі від AWS SNS, щоб отримувати алерти.
+
+Видалити все:
 
 ```bash
-curl http://localhost:8000/api/v1/projects/?limit=10&offset=0
+terraform destroy
 ```
 
-### Get Project Details
+## CI/CD
+
+`.github/workflows/deploy.yml`, запускається на push у `main` (зміни лише в `terraform/` чи `*.md` деплой не запускають):
+
+1. **Checkout** коду.
+2. **Вхід в AWS через OIDC:** GitHub видає короткоживучий токен, AWS перевіряє його і дає тимчасові ключі ролі `travel-planner-github-deploy`. Роль може взяти лише цей репозиторій з гілки `main`. Збережених ключів доступу в GitHub немає — лише змінна `AWS_ROLE_ARN`.
+3. **Збірка образу** (ARM64) і **push в ECR** з тегом = хеш коміту.
+4. **Нова ревізія task definition** з новим образом.
+5. **Оновлення ECS-сервісу** і очікування, поки новий контейнер пройде health check. Зламаний деплой автоматично відкочується (deployment circuit breaker).
+
+Роль має мінімальні права: push лише в цей ECR-репозиторій, оновлення лише цього ECS-сервісу, `iam:PassRole` лише для двох ролей задачі.
+
+Відкат на попередню версію — перезапустити workflow для старого коміту (`Actions → Deploy to AWS → Re-run`) або задеплоїти образ зі старим хешем.
+
+## API
+
+Повний список — у Swagger UI (`/docs`).
+
+| Метод | Ендпоінт | Опис | Токен |
+|---|---|---|---|
+| POST | `/api/v1/auth/register` | реєстрація (email, пароль ≥ 8 символів) | — |
+| POST | `/api/v1/auth/login` | вхід (form: `username`=email, `password`) → JWT | — |
+| GET | `/api/v1/auth/me` | поточний користувач | ✅ |
+| GET | `/api/v1/projects/` | список проєктів | — |
+| GET | `/api/v1/projects/{id}` | проєкт з місцями | — |
+| POST | `/api/v1/projects/` | створити проєкт | ✅ |
+| PATCH | `/api/v1/projects/{id}` | змінити проєкт | ✅ |
+| DELETE | `/api/v1/projects/{id}` | видалити (якщо немає відвіданих місць) | ✅ |
+| GET | `/api/v1/projects/{id}/places/` | місця проєкту | — |
+| POST | `/api/v1/projects/{id}/places/` | додати місце (макс. 10) | ✅ |
+| PATCH | `/api/v1/projects/{id}/places/{place_id}` | нотатки / відмітка «відвідано» | ✅ |
+| GET | `/health` | стан застосунку і зв'язку з базою | — |
+
+Захищені ендпоінти без токена повертають **401**.
 
 ```bash
-curl http://localhost:8000/api/v1/projects/1
+URL=http://travel-planner-alb-1039128351.eu-north-1.elb.amazonaws.com
+
+curl -X POST $URL/api/v1/auth/register -H 'Content-Type: application/json' \
+  -d '{"email":"me@example.com","password":"secret123"}'
+
+TOKEN=$(curl -s -X POST $URL/api/v1/auth/login \
+  -d 'username=me@example.com&password=secret123' | jq -r .access_token)
+
+curl -X POST $URL/api/v1/projects/ \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Stockholm trip","start_date":"2026-12-10","place_external_ids":[27992]}'
 ```
 
-### Update Project
+У Swagger UI: кнопка **Authorize** → email і пароль → захищені запити йдуть з токеном.
 
-```bash
-curl -X PATCH http://localhost:8000/api/v1/projects/1 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Updated Project Name",
-    "description": "New description"
-  }'
-```
+> Назви місць беруться з публічного API Art Institute of Chicago. Він закритий Cloudflare-перевіркою для серверних запитів, тому в хмарі `ARTIC_API_ENABLED=false` і місце зберігається як `Artwork #<id>`.
 
-### Add a Place to Existing Project
+## Моніторинг
 
-```bash
-curl -X POST http://localhost:8000/api/v1/projects/1/places/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "external_id": 27992
-  }'
-```
+- **Логи** контейнера — CloudWatch Logs, група `/ecs/travel-planner` (7 днів).
+- **Дашборд** `travel-planner` (`terraform output dashboard_url`): запити за хвилину, помилки 5xx, латентність p50/p95, CPU і пам'ять, здорові/нездорові екземпляри, стан алертів.
+- **Алерти на email** (через SNS):
+  - більше 5 відповідей 5xx за хвилину;
+  - жоден екземпляр не проходить health check 2 хвилини.
 
-### Update Place (Mark as Visited)
+## Бюджет
 
-```bash
-curl -X PATCH http://localhost:8000/api/v1/projects/1/places/1 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "notes": "Beautiful artwork!",
-    "is_visited": true
-  }'
-```
-
-### Delete Project
-
-```bash
-curl -X DELETE http://localhost:8000/api/v1/projects/1
-```
-
-## Business Logic
-
-### Project Status
-
-- **Active**: Default status when project is created
-- **Completed**: Automatically set when all places in the project are marked as visited
-
-### Validation Rules
-
-1. **Maximum 10 places per project**: Cannot add more than 10 places
-2. **Minimum 1 place**: Project should have at least one place (can be added after creation)
-3. **Unique places**: Cannot add the same external_id to a project twice
-4. **API validation**: Each place must exist in the Art Institute API
-5. **Delete protection**: Cannot delete a project if any place is marked as visited
-
-## Project Structure
-
-```
-app/
-├── api/
-│   ├── dependencies.py          # Dependency injection
-│   └── v1/
-│       ├── router.py            # Main API router
-│       └── routes/
-│           ├── projects.py      # Project endpoints
-│           └── project_places.py # Place endpoints
-├── core/
-│   ├── config.py                # Configuration settings
-│   ├── database.py              # Database setup
-│   └── exceptions.py            # Custom exceptions
-├── models/
-│   ├── project.py               # Project ORM model
-│   └── project_place.py         # ProjectPlace ORM model
-├── repositories/
-│   ├── project_repository.py    # Project data access
-│   └── project_place_repository.py # Place data access
-├── schemas/
-│   ├── project.py               # Project Pydantic schemas
-│   └── project_place.py         # Place Pydantic schemas
-├── services/
-│   └── artic_service.py         # Art Institute API client
-└── main.py                      # Application entry point
-```
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `APP_ENV` | Application environment | `development` |
-| `DATABASE_URL` | SQLite database connection string | `sqlite+aiosqlite:///./travel_planner.db` |
-| `ARTIC_API_BASE_URL` | Art Institute API base URL | `https://api.artic.edu/api/v1` |
-| `ARTIC_API_TIMEOUT` | API request timeout in seconds | `10` |
+AWS Budgets: $10 на місяць, листи при 50% і 100% фактичних витрат та при прогнозі понад 100%.
