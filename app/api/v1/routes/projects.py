@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_artic_service, get_place_repo, get_project_repo
+from app.api.dependencies import get_artic_service, get_current_user, get_place_repo, get_project_repo
 from app.core.database import get_db
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.project import Project
@@ -36,7 +36,7 @@ async def get_project(
     return project
 
 
-@router.post("/", response_model=ProjectRead, status_code=201)
+@router.post("/", response_model=ProjectRead, status_code=201, dependencies=[Depends(get_current_user)])
 async def create_project(
     body: ProjectCreate,
     session: AsyncSession = Depends(get_db),
@@ -67,7 +67,7 @@ async def create_project(
     return project
 
 
-@router.patch("/{project_id}", response_model=ProjectRead)
+@router.patch("/{project_id}", response_model=ProjectRead, dependencies=[Depends(get_current_user)])
 async def update_project(
     project_id: int,
     body: ProjectUpdate,
@@ -83,7 +83,7 @@ async def update_project(
     return project
 
 
-@router.delete("/{project_id}", status_code=204)
+@router.delete("/{project_id}", status_code=204, dependencies=[Depends(get_current_user)])
 async def delete_project(
     project_id: int,
     project_repo: ProjectRepository = Depends(get_project_repo),

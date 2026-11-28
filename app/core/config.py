@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     DB_USER: str = "postgres"
     DB_PASSWORD: str = ""
 
+    # JWT signing key: required, comes from env (.env locally, Secrets Manager in AWS)
+    JWT_SECRET: str
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 60
+
     ARTIC_API_ENABLED: bool = True
     ARTIC_API_BASE_URL: str = "https://api.artic.edu/api/v1"
     ARTIC_API_TIMEOUT: int = 10

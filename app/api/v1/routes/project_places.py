@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.dependencies import get_artic_service, get_place_repo, get_project_repo
+from app.api.dependencies import get_artic_service, get_current_user, get_place_repo, get_project_repo
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.project_place import ProjectPlace
 from app.repositories.project_place_repository import ProjectPlaceRepository
@@ -54,7 +54,7 @@ async def get_place(
     return place
 
 
-@router.post("/", response_model=ProjectPlaceRead, status_code=201)
+@router.post("/", response_model=ProjectPlaceRead, status_code=201, dependencies=[Depends(get_current_user)])
 async def add_place(
     project_id: int,
     body: ProjectPlaceCreate,
@@ -99,7 +99,7 @@ async def add_place(
     return place
 
 
-@router.patch("/{place_id}", response_model=ProjectPlaceRead)
+@router.patch("/{place_id}", response_model=ProjectPlaceRead, dependencies=[Depends(get_current_user)])
 async def update_place(
     project_id: int,
     place_id: int,

@@ -24,3 +24,7 @@ output "github_deploy_role_arn" {
   description = "Role assumed by GitHub Actions (set as repo variable AWS_ROLE_ARN)"
   value       = aws_iam_role.github_deploy.arn
 }
+
+output "dashboard_url" {
+  value = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards/dashboard/${aws_cloudwatch_dashboard.main.dashboard_name}"
+}

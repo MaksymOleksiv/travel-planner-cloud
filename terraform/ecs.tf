@@ -39,9 +39,12 @@ resource "aws_iam_role_policy" "task_execution_db_secret" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = "secretsmanager:GetSecretValue"
-      Resource = aws_db_instance.main.master_user_secret[0].secret_arn
+      Effect = "Allow"
+      Action = "secretsmanager:GetSecretValue"
+      Resource = [
+        aws_db_instance.main.master_user_secret[0].secret_arn,
+        aws_secretsmanager_secret.jwt.arn,
+      ]
     }]
   })
 }
@@ -81,10 +84,16 @@ resource "aws_ecs_task_definition" "app" {
       { name = "ARTIC_API_ENABLED", value = "false" },
     ]
 
-    secrets = [{
-      name      = "DB_PASSWORD"
-      valueFrom = "${aws_db_instance.main.master_user_secret[0].secret_arn}:password::"
-    }]
+    secrets = [
+      {
+        name      = "DB_PASSWORD"
+        valueFrom = "${aws_db_instance.main.master_user_secret[0].secret_arn}:password::"
+      },
+      {
+        name      = "JWT_SECRET"
+        valueFrom = aws_secretsmanager_secret.jwt.arn
+      },
+    ]
 
     logConfiguration = {
       logDriver = "awslogs"
